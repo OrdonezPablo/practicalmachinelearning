@@ -1,0 +1,181 @@
+---
+title: "Coursera Practical Machine Learning Course Project"
+author: "Pablo Ordonez"
+date: "6/28/2019"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(caret)
+
+```
+
+#1 Loading data
+
+```{r data, cache=TRUE}
+
+train <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+
+test <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+
+```
+
+
+#2 Exploring the data set
+
+```{r explore}
+
+dim(train)
+str(train)
+
+```
+
+The train data set contains 160 variables with 19,622 observations.
+
+However several columns are mostly NAs which require further cleaning.
+
+The "classe" variable is the output variable. According to the documentation:
+
+"Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg)."
+
+
+Read more: http://groupware.les.inf.puc-rio.br/har#dataset#ixzz5rdRbFeQA
+
+#3 Cleaning the data
+
+First we use the nzv or "near zero variance" identification predictors from the Caret package which according to the help guide "diagnoses predictors that have one unique value or predictors that have both the following characteristics: they have very few unique values relative to the numer of samples and the ratio of the frequency of the most common value to the frequency of the second most common value is large".
+
+```{r cleaning, cache = TRUE}
+
+nzv <- nzv(train)
+
+train_clean <- train[,-nzv]
+test_clean <- test[,-nzv]
+
+dim(train_clean)
+dim(test_clean)
+
+```
+
+The near-zero-variance reduction dimishes the predictor variables from 160 to 100. However several variables contain a high number of NAs, which we will further clean in the next step. 
+
+```{r clean_na}
+
+pp_na <- colSums(is.na(train_clean))/nrow(train_clean)
+
+summary(pp_na)
+
+#we can clean columns with the proportion of NAs above the 3th quantil
+
+clean_na <- colSums(is.na(train_clean))<0.97*nrow(train_clean)
+
+table(clean_na)
+
+#this will remove 41 columns leaving 59 predictors
+
+test_clean <- test_clean[, clean_na]
+train_clean <- train_clean[, clean_na]
+
+#further eliminate the first five columns wich contain other ID variables not useful for prediction, leaving 54 predictors
+
+train_clean <- train_clean[, -(1:5)]
+test_clean <- test_clean[, -(1:5)]
+
+```
+
+#4 Building the models
+
+We will apply three models to our motion detection data: decision trees, random forest and boosting (gbm). For the later two models we use cross validation with k=2 for time efficiency while the best is to use k=10.
+
+## 4.1 Predicting with trees
+
+```{r trees}
+
+set.seed(777)
+inTrain <- createDataPartition(train_clean$classe, p = 0.70, list = FALSE)
+train_tree <- train_clean[inTrain,]
+test_tree <- train_clean[-inTrain,]
+modfit_trees <- train(classe ~ ., method = "rpart", data = train_tree)
+
+
+```
+
+```{r}
+library(rattle)
+fancyRpartPlot(modfit_trees$finalModel)
+
+```
+
+```{r}
+
+model_predict_trees <- predict(modfit_trees, newdata = test_tree)
+
+confussion_matrix_trees <- confusionMatrix(test_tree$classe, model_predict_trees)
+
+# Confussion matrix
+confussion_matrix_trees$table
+
+# Accuracy
+confussion_matrix_trees$overall[1]
+  
+```
+
+## 4.2 Random Forests
+
+
+
+```{r randomForest}
+
+# using cross validation with 2 folds
+mytrControl <- trainControl(number=2, method="cv")
+modfit_rf <- train(classe ~ ., data = train_tree, method = "rf", trControl=mytrControl,  verbose = FALSE)
+model_predict_rf <- predict(modfit_rf, newdata = test_tree)
+confussion_matrix_rf <- confusionMatrix(test_tree$classe, model_predict_rf)
+
+# Confussion matrix
+confussion_matrix_rf$table
+
+# Accuracy
+confussion_matrix_rf$overall[1]
+
+```
+
+## 4.3 Boosting
+
+```{r boosting}
+
+boosting_control <- trainControl(method = "repeatedcv", number = 2, repeats = 1)
+modfit_boost <- train(classe ~ ., data = train_tree, method = "gbm", trControl = boosting_control, verbose = FALSE)
+model_predict_boost <- predict(modfit_boost, newdata = test_tree)
+confussion_matrix_boost <- confusionMatrix(test_tree$classe, model_predict_boost)
+
+# Confussion matrix
+confussion_matrix_boost$table
+
+# Accuracy
+confussion_matrix_boost$overall[1]
+
+```
+
+# 5 Summary and conclusion
+
+Model's accuracy. The random forest tree has the highest accuracy closely followed by boosting while the decision tree lags behind.
+
+decision trees:0.5753611 
+random forest:0.9983008 
+boosting with gbm: 0.9860663
+
+#4. Applying model selection to test data
+
+```{r final}
+
+final <- predict(modfit_rf, newdata = test_clean)
+final
+
+```
+
